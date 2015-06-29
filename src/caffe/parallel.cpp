@@ -205,7 +205,7 @@ P2PSync<Dtype>::P2PSync(shared_ptr<Solver<Dtype> > root_solver,
     solver_ = root_solver;
   } else {
     Caffe::set_root_solver(false);
-    solver_.reset(new Solver<Dtype>(param));
+    solver_.reset(new WorkerSolver<Dtype>(param));
     Caffe::set_root_solver(true);
   }
   this->configure(solver_.get());

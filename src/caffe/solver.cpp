@@ -243,7 +243,7 @@ void Solver<Dtype>::Step(int iters) {
       callbacks_[i]->on_gradients_ready(&timer, &timing);
     }
     timer.Start();
-    Iteration();
+    ApplyUpdate();
     timing << " apply: " << timer.MilliSeconds();
 
 #ifdef BENCHMARK_SOLVER
@@ -502,7 +502,7 @@ void SGDSolver<Dtype>::ClipGradients() {
 }
 
 template <typename Dtype>
-void SGDSolver<Dtype>::Iteration() {
+void SGDSolver<Dtype>::ApplyUpdate() {
   CHECK(Caffe::root_solver());
   Dtype rate = GetLearningRate();
   if (this->param_.display() && this->iter_ % this->param_.display() == 0) {

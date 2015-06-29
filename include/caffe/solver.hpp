@@ -12,7 +12,7 @@ namespace caffe {
 /**
  * @brief An interface for classes that perform optimization on Net%s.
  *
- * Requires implementation of ComputeUpdateValue to compute a parameter update
+ * Requires implementation of ApplyUpdate to compute a parameter update
  * given the current state of the Net parameters.
  */
 template <typename Dtype>
@@ -55,8 +55,8 @@ class Solver {
   }
 
  protected:
-  // Get and apply the update value for the current iteration.
-  virtual void Iteration() {}
+  // Make and apply the update value for the current iteration.
+  virtual void ApplyUpdate() = 0;
   // The Solver::Snapshot function implements the basic snapshotting utility
   // that stores the learned net. You should implement the SnapshotSolverState()
   // function that produces a SolverState protocol buffer that needs to be
@@ -65,12 +65,8 @@ class Solver {
   // The test routine
   void TestAll();
   void Test(const int test_net_id = 0);
-  virtual void SnapshotSolverState(SolverState* state) {
-    CHECK(false) << "Should be overriden";
-  }
-  virtual void RestoreSolverState(const SolverState& state) {
-    CHECK(false) << "Should be overriden";
-  }
+  virtual void SnapshotSolverState(SolverState* state) = 0;
+  virtual void RestoreSolverState(const SolverState& state) = 0;
   void DisplayOutputBlobs(const int net_id);
 
   SolverParameter param_;
@@ -86,6 +82,25 @@ class Solver {
   DISABLE_COPY_AND_ASSIGN(Solver);
 };
 
+/**
+ * @brief Solver that only computes gradients, used as worker
+ *        for multi-GPU training.
+ */
+template <typename Dtype>
+class WorkerSolver : public Solver<Dtype> {
+ public:
+  explicit WorkerSolver(const SolverParameter& param)
+      : Solver<Dtype>(param) {}
+
+ protected:
+  void ApplyUpdate() {}
+  void SnapshotSolverState(SolverState* state) {
+    CHECK(false) << "Should not be called on worker";
+  }
+  void RestoreSolverState(const SolverState& state) {
+    CHECK(false) << "Should not be called on worker";
+  }
+};
 
 /**
  * @brief Optimizes the parameters of a Net using
@@ -104,7 +119,7 @@ class SGDSolver : public Solver<Dtype> {
  protected:
   void PreSolve();
   Dtype GetLearningRate();
-  virtual void Iteration();
+  virtual void ApplyUpdate();
   virtual void Regularize(int param_id);
   virtual void ComputeUpdateValue(int param_id, Dtype rate);
   virtual void ClipGradients();
