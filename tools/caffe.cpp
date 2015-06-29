@@ -19,11 +19,9 @@ using caffe::Timer;
 using caffe::vector;
 using std::ostringstream;
 
-DEFINE_int32(gpu, -1,
-    "Run in GPU mode on given device ID (Legacy switch, use -gpus).");
-DEFINE_string(gpus, "",
-    "Run in GPU mode on given device IDs separated by ','."
-    "Use '-gpus all' to run on all available GPUs.");
+DEFINE_string(gpu, "",
+    "Optional; run in GPU mode on given device IDs separated by ','."
+    "Use '-gpu all' to run on all available GPUs.");
 DEFINE_string(solver, "",
     "The solver definition protocol buffer text file.");
 DEFINE_string(model, "",
@@ -68,10 +66,7 @@ static BrewFunction GetBrewFunction(const caffe::string& name) {
 
 // Parse GPU ids or use all available devices
 static void get_gpus(vector<int>* gpus) {
-  if (FLAGS_gpu >= 0) {
-    FLAGS_gpus = "" + boost::lexical_cast<string>(FLAGS_gpu);
-  }
-  if (FLAGS_gpus == "all") {
+  if (FLAGS_gpu == "all") {
     int count = 0;
 #ifndef CPU_ONLY
     CUDA_CHECK(cudaGetDeviceCount(&count));
@@ -81,9 +76,9 @@ static void get_gpus(vector<int>* gpus) {
     for (int i = 0; i < count; ++i) {
       gpus->push_back(i);
     }
-  } else if (FLAGS_gpus.size()) {
+  } else if (FLAGS_gpu.size()) {
     vector<string> strings;
-    boost::split(strings, FLAGS_gpus, boost::is_any_of(","));
+    boost::split(strings, FLAGS_gpu, boost::is_any_of(","));
     for (int i = 0; i < strings.size(); ++i) {
       gpus->push_back(boost::lexical_cast<int>(strings[i]));
     }
@@ -100,7 +95,7 @@ static void get_gpus(vector<int>* gpus) {
 
 // Device Query: show diagnostic information for a GPU device.
 int device_query() {
-  LOG(INFO) << "Querying GPUs " << FLAGS_gpus;
+  LOG(INFO) << "Querying GPUs " << FLAGS_gpu;
   vector<int> gpus;
   get_gpus(&gpus);
   for (int i = 0; i < gpus.size(); ++i) {
@@ -137,10 +132,10 @@ int train() {
 
   // If the gpus flag is not provided, allow the mode and device to be set
   // in the solver prototxt.
-  if (FLAGS_gpu < 0 && FLAGS_gpus.size() == 0
+  if (FLAGS_gpu.size() == 0
       && solver_param.solver_mode() == caffe::SolverParameter_SolverMode_GPU
       && solver_param.has_device_id()) {
-    FLAGS_gpus = "" + boost::lexical_cast<string>(solver_param.device_id());
+    FLAGS_gpu = "" + boost::lexical_cast<string>(solver_param.device_id());
   }
 
   vector<int> gpus;
