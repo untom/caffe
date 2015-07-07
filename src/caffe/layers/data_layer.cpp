@@ -36,6 +36,15 @@ void DataLayer<Dtype>::DataLayerSetUp(const vector<Blob<Dtype>*>& bottom,
       DecodeDatumNative(&datum)) {
     LOG(INFO) << "Decoding Datum";
   }
+  datum.ParseFromString(cursor_->value());
+  // Use data_transformer to infer the expected blob shape from datum.
+  vector<int> top_shape = this->data_transformer_->InferBlobShape(datum);
+  this->transformed_data_.Reshape(top_shape);
+  // Reshape top[0] and prefetch_data according to the batch_size.
+  top_shape[0] = this->layer_param_.data_param().batch_size();
+  this->prefetch_data_.Reshape(top_shape);
+  top[0]->ReshapeLike(this->prefetch_data_);
+/*
   // image
   const int crop_size = this->layer_param_.transform_param().crop_size();
   const int batch_size = this->layer_param_.data_param().batch_size();
@@ -57,6 +66,35 @@ void DataLayer<Dtype>::DataLayerSetUp(const vector<Blob<Dtype>*>& bottom,
     this->transformed_data_.Reshape(1, datum.channels(),
         datum.height(), datum.width());
   }
+
+=======
+  // Initialize DB
+  db_.reset(db::GetDB(this->layer_param_.data_param().backend()));
+  db_->Open(this->layer_param_.data_param().source(), db::READ);
+  cursor_.reset(db_->NewCursor());
+
+  // Check if we should randomly skip a few data points
+  if (this->layer_param_.data_param().rand_skip()) {
+    unsigned int skip = caffe_rng_rand() %
+                        this->layer_param_.data_param().rand_skip();
+    LOG(INFO) << "Skipping first " << skip << " data points.";
+    while (skip-- > 0) {
+      cursor_->Next();
+    }
+  }
+  // Read a data point, to initialize the prefetch and top blobs.
+  Datum datum;
+  datum.ParseFromString(cursor_->value());
+  // Use data_transformer to infer the expected blob shape from datum.
+  vector<int> top_shape = this->data_transformer_->InferBlobShape(datum);
+  this->transformed_data_.Reshape(top_shape);
+  // Reshape top[0] and prefetch_data according to the batch_size.
+  top_shape[0] = this->layer_param_.data_param().batch_size();
+  this->prefetch_data_.Reshape(top_shape);
+  top[0]->ReshapeLike(this->prefetch_data_);
+
+>>>>>>> waldol1/master
+*/
   LOG(INFO) << "output data size: " << top[0]->num() << ","
       << top[0]->channels() << "," << top[0]->height() << ","
       << top[0]->width();
@@ -82,24 +120,18 @@ void DataLayer<Dtype>::load_batch(Batch<Dtype>* batch) {
   CHECK(batch->data_.count());
   CHECK(this->transformed_data_.count());
 
-  // Reshape on single input batches for inputs of varying dimension.
+  // Reshape according to the first datum of each batch
+  // on single input batches allows for inputs of varying dimension.
   const int batch_size = this->layer_param_.data_param().batch_size();
-  const int crop_size = this->layer_param_.transform_param().crop_size();
-  bool force_color = this->layer_param_.data_param().force_encoded_color();
-  if (batch_size == 1 && crop_size == 0) {
-    Datum& datum = *(reader_.full().peek());
-    if (datum.encoded()) {
-      if (force_color) {
-        DecodeDatum(&datum, true);
-      } else {
-        DecodeDatumNative(&datum);
-      }
-    }
-    batch->data_.Reshape(1, datum.channels(),
-        datum.height(), datum.width());
-    this->transformed_data_.Reshape(1, datum.channels(),
-        datum.height(), datum.width());
-  }
+  Datum datum;
+  datum.ParseFromString(cursor_->value());
+  // Use data_transformer to infer the expected blob shape from datum.
+  this->data_transformer_->SampleImageResizeDims();
+  vector<int> top_shape = this->data_transformer_->InferBlobShape(datum);
+  this->transformed_data_.Reshape(top_shape);
+  // Reshape prefetch_data according to the batch_size.
+  top_shape[0] = batch_size;
+  this->prefetch_data_.Reshape(top_shape);
 
   Dtype* top_data = batch->data_.mutable_cpu_data();
   Dtype* top_label = NULL;  // suppress warnings about uninitialized variables
@@ -107,6 +139,7 @@ void DataLayer<Dtype>::load_batch(Batch<Dtype>* batch) {
   if (this->output_labels_) {
     top_label = batch->label_.mutable_cpu_data();
   }
+  timer.Start();
   for (int item_id = 0; item_id < batch_size; ++item_id) {
     // get a blob
     timer.Start();
@@ -134,11 +167,8 @@ void DataLayer<Dtype>::load_batch(Batch<Dtype>* batch) {
     timer.Start();
     int offset = batch->data_.offset(item_id);
     this->transformed_data_.set_cpu_data(top_data + offset);
-    if (datum.encoded()) {
-      this->data_transformer_->Transform(cv_img, &(this->transformed_data_));
-    } else {
-      this->data_transformer_->Transform(datum, &(this->transformed_data_));
-    }
+    this->data_transformer_->Transform(datum, &(this->transformed_data_));
+    // Copy label.
     if (this->output_labels_) {
       top_label[item_id] = datum.label();
     }
@@ -146,6 +176,7 @@ void DataLayer<Dtype>::load_batch(Batch<Dtype>* batch) {
 
     reader_.free().push(const_cast<Datum*>(&datum));
   }
+  timer.Stop();
   batch_timer.Stop();
 
 #ifdef BENCHMARK_DATA

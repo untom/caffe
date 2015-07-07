@@ -1,4 +1,5 @@
 #include <opencv2/core/core.hpp>
+#include <opencv2/imgproc/imgproc.hpp>
 
 #include <string>
 #include <vector>
@@ -34,6 +35,7 @@ DataTransformer<Dtype>::DataTransformer(const TransformationParameter& param,
       mean_values_.push_back(param_.mean_value(c));
     }
   }
+  resize_width_ = resize_height_ = 0;
 }
 
 template<typename Dtype>
@@ -127,10 +129,31 @@ void DataTransformer<Dtype>::Transform(const Datum& datum,
 template<typename Dtype>
 void DataTransformer<Dtype>::Transform(const Datum& datum,
                                        Blob<Dtype>* transformed_blob) {
+  // If datum is encoded, decoded and transform the cv::image.
+  if (datum.encoded()) {
+    CHECK(!param_.force_color() && !param_.force_gray())
+        << "cannot set both force_color and force_gray";
+    cv::Mat cv_img;
+    if (param_.force_color() || param_.force_gray()) {
+    // If force_color then decode in color otherwise decode in gray.
+      cv_img = DecodeDatumToCVMat(datum, param_.force_color());
+    } else {
+      cv_img = DecodeDatumToCVMatNative(datum);
+    }
+    // Transform the cv::image into blob.
+    return Transform(cv_img, transformed_blob);
+  } else {
+    if (param_.force_color() || param_.force_gray()) {
+      LOG(ERROR) << "force_color and force_gray only for encoded datum";
+    }
+  }
+
+  const int crop_size = param_.crop_size();
   const int datum_channels = datum.channels();
   const int datum_height = datum.height();
   const int datum_width = datum.width();
 
+  // Check dimensions.
   const int channels = transformed_blob->channels();
   const int height = transformed_blob->height();
   const int width = transformed_blob->width();
@@ -140,8 +163,6 @@ void DataTransformer<Dtype>::Transform(const Datum& datum,
   CHECK_LE(height, datum_height);
   CHECK_LE(width, datum_width);
   CHECK_GE(num, 1);
-
-  const int crop_size = param_.crop_size();
 
   if (crop_size) {
     CHECK_EQ(crop_size, height);
@@ -198,10 +219,12 @@ void DataTransformer<Dtype>::Transform(const vector<cv::Mat> & mat_vector,
 template<typename Dtype>
 void DataTransformer<Dtype>::Transform(const cv::Mat& cv_img,
                                        Blob<Dtype>* transformed_blob) {
+  const int crop_size = param_.crop_size();
   const int img_channels = cv_img.channels();
   const int img_height = cv_img.rows;
   const int img_width = cv_img.cols;
 
+  // Check dimensions.
   const int channels = transformed_blob->channels();
   const int height = transformed_blob->height();
   const int width = transformed_blob->width();
@@ -214,7 +237,6 @@ void DataTransformer<Dtype>::Transform(const cv::Mat& cv_img,
 
   CHECK(cv_img.depth() == CV_8U) << "Image data type must be unsigned byte";
 
-  const int crop_size = param_.crop_size();
   const Dtype scale = param_.scale();
   const bool do_mirror = param_.mirror() && Rand(2);
   const bool has_mean_file = param_.has_mean_file();
@@ -246,8 +268,10 @@ void DataTransformer<Dtype>::Transform(const cv::Mat& cv_img,
   int w_off = 0;
   cv::Mat cv_cropped_img = cv_img;
   if (crop_size) {
-    CHECK_EQ(crop_size, height);
-    CHECK_EQ(crop_size, width);
+  	if (resize_width_ <= 0 || resize_height_ <= 0) {
+      CHECK_EQ(crop_size, height);
+      CHECK_EQ(crop_size, width);
+	}
     // We only do random crop when we do training.
     if (phase_ == TRAIN) {
       h_off = Rand(img_height - crop_size + 1);
@@ -264,6 +288,17 @@ void DataTransformer<Dtype>::Transform(const cv::Mat& cv_img,
   }
 
   CHECK(cv_cropped_img.data);
+
+  if (resize_width_ > 0 && resize_height_ > 0 && phase_ == TRAIN) {
+    // resize the crop to the current resize dimensions
+    CHECK_EQ(resize_height_, height);
+    CHECK_EQ(resize_width_, width);
+
+    cv::Mat resized;
+	cv::Size size(resize_width_, resize_height_);
+    cv::resize(cv_cropped_img, resized, size);
+	cv_cropped_img = resized;
+  }
 
   Dtype* transformed_data = transformed_blob->mutable_cpu_data();
   int top_index;
@@ -299,10 +334,22 @@ void DataTransformer<Dtype>::Transform(const cv::Mat& cv_img,
 template<typename Dtype>
 void DataTransformer<Dtype>::Transform(Blob<Dtype>* input_blob,
                                        Blob<Dtype>* transformed_blob) {
+  const int crop_size = param_.crop_size();
   const int input_num = input_blob->num();
   const int input_channels = input_blob->channels();
   const int input_height = input_blob->height();
   const int input_width = input_blob->width();
+
+  if (transformed_blob->count() == 0) {
+    // Initialize transformed_blob with the right shape.
+    if (crop_size) {
+      transformed_blob->Reshape(input_num, input_channels,
+                                crop_size, crop_size);
+    } else {
+      transformed_blob->Reshape(input_num, input_channels,
+                                input_height, input_width);
+    }
+  }
 
   const int num = transformed_blob->num();
   const int channels = transformed_blob->channels();
@@ -315,7 +362,7 @@ void DataTransformer<Dtype>::Transform(Blob<Dtype>* input_blob,
   CHECK_GE(input_height, height);
   CHECK_GE(input_width, width);
 
-  const int crop_size = param_.crop_size();
+
   const Dtype scale = param_.scale();
   const bool do_mirror = param_.mirror() && Rand(2);
   const bool has_mean_file = param_.has_mean_file();
@@ -397,10 +444,110 @@ void DataTransformer<Dtype>::Transform(Blob<Dtype>* input_blob,
   }
 }
 
+template<typename Dtype>
+vector<int> DataTransformer<Dtype>::InferBlobShape(const Datum& datum) {
+  if (datum.encoded()) {
+    CHECK(!param_.force_color() && !param_.force_gray())
+        << "cannot set both force_color and force_gray";
+    cv::Mat cv_img;
+    if (param_.force_color() || param_.force_gray()) {
+    // If force_color then decode in color otherwise decode in gray.
+      cv_img = DecodeDatumToCVMat(datum, param_.force_color());
+    } else {
+      cv_img = DecodeDatumToCVMatNative(datum);
+    }
+    // InferBlobShape using the cv::image.
+    return InferBlobShape(cv_img);
+  }
+
+  const int crop_size = param_.crop_size();
+  const int datum_channels = datum.channels();
+  const int datum_height = datum.height();
+  const int datum_width = datum.width();
+  // Check dimensions.
+  CHECK_GT(datum_channels, 0);
+  CHECK_GE(datum_height, crop_size);
+  CHECK_GE(datum_width, crop_size);
+  // Build BlobShape.
+  vector<int> shape(4);
+  shape[0] = 1;
+  shape[1] = datum_channels;
+  shape[2] = (crop_size)? crop_size: datum_height;
+  shape[3] = (crop_size)? crop_size: datum_width;
+  return shape;
+}
+
+template<typename Dtype>
+vector<int> DataTransformer<Dtype>::InferBlobShape(
+    const vector<Datum> & datum_vector) {
+  const int num = datum_vector.size();
+  CHECK_GT(num, 0) << "There is no datum to in the vector";
+  // Use first datum in the vector to InferBlobShape.
+  vector<int> shape = InferBlobShape(datum_vector[0]);
+  // Adjust num to the size of the vector.
+  shape[0] = num;
+  return shape;
+}
+
+template<typename Dtype>
+vector<int> DataTransformer<Dtype>::InferBlobShape(const cv::Mat& cv_img) {
+  const int crop_size = param_.crop_size();
+  const int img_channels = cv_img.channels();
+  const int img_height = cv_img.rows;
+  const int img_width = cv_img.cols;
+  // Check dimensions.
+  CHECK_GT(img_channels, 0);
+  CHECK_GE(img_height, crop_size);
+  CHECK_GE(img_width, crop_size);
+  // Build BlobShape.
+  vector<int> shape(4);
+  shape[0] = 1;
+  shape[1] = img_channels;
+  if (resize_width_ > 0 && resize_height_ > 0) {
+    shape[2] = resize_height_;
+	shape[3] = resize_width_;
+  } else {
+    shape[2] = (crop_size)? crop_size: img_height;
+    shape[3] = (crop_size)? crop_size: img_width;
+  }
+  return shape;
+}
+
+template<typename Dtype>
+vector<int> DataTransformer<Dtype>::InferBlobShape(
+    const vector<cv::Mat> & mat_vector) {
+  const int num = mat_vector.size();
+  CHECK_GT(num, 0) << "There is no cv_img to in the vector";
+  // Use first cv_img in the vector to InferBlobShape.
+  vector<int> shape = InferBlobShape(mat_vector[0]);
+  // Adjust num to the size of the vector.
+  shape[0] = num;
+  return shape;
+}
+ 
+template <typename Dtype>
+void DataTransformer<Dtype>::SampleImageResizeDims() {
+  const int min = param_.min_resize();
+  const int max = param_.max_resize();
+  const bool square = param_.square_resize(); 
+  if (min > 0 && max > 0) {
+    CHECK_GT(max, min) << "Resize max is smaller than resize min";
+    resize_width_ = Rand(max - min) + min;   
+	if (square) {
+      resize_height_ = resize_width_;
+	} else {
+	  resize_height_ = Rand(max - min) + min;
+    }
+	DLOG(INFO) << "Changing input dimensions to " << resize_width_ 
+		<< "x" << resize_height_;
+  }
+}
+
 template <typename Dtype>
 void DataTransformer<Dtype>::InitRand() {
   const bool needs_rand = param_.mirror() ||
-      (phase_ == TRAIN && param_.crop_size());
+      (phase_ == TRAIN && param_.crop_size()) ||
+	  (param_.min_resize() > 0 && param_.max_resize() > 0);
   if (needs_rand) {
     const unsigned int rng_seed = caffe_rng_rand();
     rng_.reset(new Caffe::RNG(rng_seed));

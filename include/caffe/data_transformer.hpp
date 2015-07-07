@@ -62,6 +62,7 @@ class DataTransformer {
    */
   void Transform(const vector<cv::Mat> & mat_vector,
                 Blob<Dtype>* transformed_blob);
+
   /**
    * @brief Applies the transformation defined in the data layer's
    * transform_param block to a cv::Mat
@@ -87,6 +88,47 @@ class DataTransformer {
    */
   void Transform(Blob<Dtype>* input_blob, Blob<Dtype>* transformed_blob);
 
+  /**
+   * @brief Infers the shape of transformed_blob will have when
+   *    the transformation is applied to the data.
+   *
+   * @param datum
+   *    Datum containing the data to be transformed.
+   */
+  vector<int> InferBlobShape(const Datum& datum);
+  /**
+   * @brief Infers the shape of transformed_blob will have when
+   *    the transformation is applied to the data.
+   *    It uses the first element to infer the shape of the blob.
+   *
+   * @param datum_vector
+   *    A vector of Datum containing the data to be transformed.
+   */
+  vector<int> InferBlobShape(const vector<Datum> & datum_vector);
+  /**
+   * @brief Infers the shape of transformed_blob will have when
+   *    the transformation is applied to the data.
+   *    It uses the first element to infer the shape of the blob.
+   *
+   * @param mat_vector
+   *    A vector of Mat containing the data to be transformed.
+   */
+  vector<int> InferBlobShape(const vector<cv::Mat> & mat_vector);
+  /**
+   * @brief Infers the shape of transformed_blob will have when
+   *    the transformation is applied to the data.
+   *
+   * @param cv_img
+   *    cv::Mat containing the data to be transformed.
+   */
+  vector<int> InferBlobShape(const cv::Mat& cv_img);
+
+  /**
+   * @brief Chooses a new height and width for random image resizing
+        if enabled
+   */
+  void SampleImageResizeDims();
+
  protected:
    /**
    * @brief Generates a random integer from Uniform({0, 1, ..., n-1}).
@@ -101,6 +143,7 @@ class DataTransformer {
   void Transform(const Datum& datum, Dtype* transformed_data);
   // Tranformation parameters
   TransformationParameter param_;
+  int resize_width_, resize_height_;
 
 
   shared_ptr<Caffe::RNG> rng_;

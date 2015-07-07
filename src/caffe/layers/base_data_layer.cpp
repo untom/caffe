@@ -22,11 +22,11 @@ void BaseDataLayer<Dtype>::LayerSetUp(const vector<Blob<Dtype>*>& bottom,
   } else {
     output_labels_ = true;
   }
-  // The subclasses should setup the size of bottom and top
-  DataLayerSetUp(bottom, top);
   data_transformer_.reset(
       new DataTransformer<Dtype>(transform_param_, this->phase_));
   data_transformer_->InitRand();
+  // The subclasses should setup the size of bottom and top
+  DataLayerSetUp(bottom, top);
 }
 
 template <typename Dtype>
@@ -102,15 +102,17 @@ void BasePrefetchingDataLayer<Dtype>::Forward_cpu(
     const vector<Blob<Dtype>*>& bottom, const vector<Blob<Dtype>*>& top) {
   Batch<Dtype>* batch = prefetch_full_.pop("Data layer prefetch queue empty");
   // Reshape to loaded data.
-  top[0]->Reshape(batch->data_.num(), batch->data_.channels(),
-      batch->data_.height(), batch->data_.width());
+  top[0]->ReshapeLike(prefetch_data_);
   // Copy the data
   caffe_copy(batch->data_.count(), batch->data_.cpu_data(),
              top[0]->mutable_cpu_data());
   DLOG(INFO) << "Prefetch copied";
   if (this->output_labels_) {
-    caffe_copy(batch->label_.count(), batch->label_.cpu_data(),
-        top[1]->mutable_cpu_data());
+    // Reshape to loaded labels.
+    top[1]->ReshapeLike(prefetch_label_);
+    // Copy the labels.
+    caffe_copy(prefetch_label_.count(), prefetch_label_.cpu_data(),
+               top[1]->mutable_cpu_data());
   }
 
   prefetch_free_.push(batch);
